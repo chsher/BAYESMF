@@ -6,7 +6,7 @@ from sklearn.decomposition import NMF
 from sklearn.decomposition import non_negative_factorization
 
 
-def vanillaNMF(X, n_components=15, random_state=22690):
+def VanillaNMF(X, n_components=15, random_state=22690):
     model = NMF(n_components=n_components, random_state=random_state)
     W = model.fit_transform(X)
     H = model.components_
@@ -14,7 +14,7 @@ def vanillaNMF(X, n_components=15, random_state=22690):
     return W, H, err
 
 
-def consensusNMF(X, n_components=15, random_state=22690, cluster_method='dbscan', interval=0, n_iters=50):
+def ConsensusNMF(X, n_components=15, random_state=22690, cluster_method='dbscan', interval=0, n_iters=50):
     if type(random_state) is int:
         np.random.seed(random_state)
         

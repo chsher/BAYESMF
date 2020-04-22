@@ -5,18 +5,18 @@ from sklearn.decomposition import non_negative_factorization
 
 import sys
 sys.path.append('/home/sxchao')
-from bayesmf.models.nmf import vanillaNMF, consensusNMF
+from bayesmf.models.nmf import VanillaNMF, ConsensusNMF
 from bayesmf.models.bmf import BayesMF, OnlineBayesMF
 
 
 def workhorse(X_train, X_test, n_components, method, random_state=22690):
     if method == 'vanilla':
-        W, H, err = vanillaNMF(X_train.T, n_components=n_components)
+        W, H, err = VanillaNMF(X_train.T, n_components=n_components)
         W, H, n_iter = non_negative_factorization(X_test.T, H=H, n_components=n_components, update_H=False, 
                                                   init=None, random_state=random_state)
         
     elif method == 'consensus':
-        W, H, err = consensusNMF(X_train.T, n_components=n_components)
+        W, H, err = ConsensusNMF(X_train.T, n_components=n_components)
         W, H, n_iter = non_negative_factorization(X_test.T, H=H, n_components=n_components, update_H=False, 
                                                   init=None, random_state=random_state)
         
