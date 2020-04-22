@@ -4,7 +4,7 @@ import numpy as np
 from sklearn.decomposition import non_negative_factorization
 
 import sys
-sys.path.append('/home/sxchao/bayesmf')
+sys.path.append('/home/sxchao')
 from bayesmf.models.nmf import vanillaNMF, consensusNMF
 from bayesmf.models.bmf import BayesMF, OnlineBayesMF
 

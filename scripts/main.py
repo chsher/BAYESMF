@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/sxchao/bayesmf')
+sys.path.append('/home/sxchao')
 from bayesmf.scripts.utils import run_kfold_xval
 
 
