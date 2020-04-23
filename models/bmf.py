@@ -1,5 +1,8 @@
+# adapted from @dawenl stochastic_PMF
+
 import numpy as np
 from scipy import special
+#from scipy.special import logsumexp
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
@@ -10,13 +13,13 @@ MINIBATCH_STMT = 'Minibatch: {0:d}'
 
 def _compute_expectations(a, b):
     Ex = a / b
-    Elogx = special.psi(a) - np.log(b) # psi(x) = digamma(x)
+    Elogx = special.psi(a) - np.log(b) 
     return Ex, Elogx
 
 
 def _gamma_term(a, b, shape, rate, Ex, Elogx):
     return np.sum((a - shape) * Elogx - (b - rate) * Ex +
-                  special.gammaln(shape) - shape * np.log(rate)) # gammaln(x) = ln(gamma(x))
+                  special.gammaln(shape) - shape * np.log(rate)) 
 
 
 class BayesMF(BaseEstimator, TransformerMixin):
@@ -92,6 +95,7 @@ class BayesMF(BaseEstimator, TransformerMixin):
 
             elbo_new = self._bound(X)
             chg = (elbo_new - elbo_old) / abs(elbo_old)
+            #chg = np.exp(logsumexp(elbo_new - elbo_old) - logsumexp(elbo_old))
             
             if self.verbose and i % 10 == 0:
                 print(ITER_STMT.format(i, elbo_new, chg))

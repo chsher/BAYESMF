@@ -1,5 +1,6 @@
 import time
 from tqdm import tqdm
+from tqdm.auto import trange
 import numpy as np
 from sklearn.decomposition import non_negative_factorization
 
@@ -38,7 +39,9 @@ def workhorse(X_train, X_test, n_components, method, random_state=22690):
     return np.sqrt(np.sum((X_test.T - np.matmul(W, H)) ** 2) / X_test.size)
 
 
-def run_kfold_xval(kfold=5, random_state=22690)
+def run_kfold_xval(X, kfold=5, random_state=22690, 
+                   components = [5, 10, 15, 20, 25], 
+                   methods = ['vanilla', 'consensus', 'batch', 'stochastic']):
     idxs = np.arange(X.shape[1])
     
     if type(random_state) is int:
@@ -47,13 +50,14 @@ def run_kfold_xval(kfold=5, random_state=22690)
 
     splits = np.split(idxs, kfold)
 
-    methods = ['vanilla', 'consensus', 'batch', 'stochastic']
-    components = [5, 10, 15, 20, 25]
     errs = {k:{v:[] for v in methods} for k in components}
     durs = {k:{v:[] for v in methods} for k in components}
 
-    for n_components in tqdm(components):
-        for k in tqdm(range(kfold)):
+    #for n_components in tqdm(components):
+    for nc in trange(len(components), desc='k-soln'):
+        n_components = components[nc]
+        #for k in tqdm(range(kfold)):
+        for k in trange(kfold, desc='method'):
             idxs_train = [i for j in np.setdiff1d(np.arange(kfold), k) for i in splits[j]]
             idxs_test = splits[k]
             X_train = X[:, idxs_train]

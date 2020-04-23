@@ -19,7 +19,7 @@ def ConsensusNMF(X, n_components=15, random_state=22690, cluster_method='dbscan'
         np.random.seed(random_state)
         
     ns = np.random.randint(max(5, n_components - interval // 2), 
-                           min(50, n_components + interval // 2 + 1), 
+                           min(95, n_components + interval // 2 + 1), 
                            size=n_iters)
 
     cs = []
