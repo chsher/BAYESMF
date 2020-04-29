@@ -22,7 +22,7 @@ def _gamma_term(a, b, shape, rate, Ex, Elogx):
                   special.gammaln(shape) - shape * np.log(rate)) 
 
 
-class BayesMF(BaseEstimator, TransformerMixin):
+class BMF(BaseEstimator, TransformerMixin):
     def __init__(self, 
                  K=15, 
                  max_iters=100, 
@@ -141,7 +141,7 @@ class BayesMF(BaseEstimator, TransformerMixin):
         return bound
 
 
-class OnlineBayesMF(BayesMF):
+class StochasticBMF(BMF):
     def __init__(self, 
                  K=15, 
                  n_epochs=5,
