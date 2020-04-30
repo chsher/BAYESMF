@@ -165,24 +165,25 @@ class LDA(BaseEstimator, TransformerMixin):
         D = X.shape[0]
         bound = 0
 
-        # E[E[log p(docs | theta, z, beta)] + E[log p(z | theta)] - log q(z)]
+        # E[ E[log p(docs | theta, z, beta)] + E[log p(z | theta)] - log q(z) ]
         for d in range(D):
             counts_d = X[d, :]
-            Eloglik_d = self.Elogb + self.Elogt[d, :][:, np.newaxis]
+            Eloglik_d = self.Elogb
             # np.outer(a,b):
             #  [ [a0*b0  a0*b1 ... a0*bV ]
             #    [a1*b0    .
             #    [ ...          .
             #    [aK*b0            aK*bV ] ]
             phi_d = np.outer(self.eElogt[d, :], 1.0 / self._phisum(d)) * self.eElogb 
-            bound += special.logsumexp(counts_d[np.newaxis, :] * phi_d * (Eloglik_d + np.log(phi_d)))
+            zterms_d = self.Elogt[d, :][:, np.newaxis] - np.log(phi_d)
+            bound += special.logsumexp(counts_d[np.newaxis, :] * phi_d * (Eloglik_d + zterms_d))
 
-        # E[log p(theta | alpha) - log q(theta | gamma)]
+        # E[ log p(theta | alpha) - log q(theta | gamma) ]
         bound += np.sum((self.alpha - self.gamma) * self.Elogt)
         bound += np.sum(special.gammaln(self.gamma))
         bound -= np.sum(special.gammaln(np.sum(self.gamma, 1)))
 
-        # E[log p(beta | eta) - log q (beta | lambda)]
+        # E[ log p(beta | eta) - log q(beta | lambda) ]
         bound += np.sum((self.eta - self.lambd) * self.Elogb)
         bound += np.sum(special.gammaln(self.lambd))
         bound -= np.sum(special.gammaln(np.sum(self.lambd, 1)))
