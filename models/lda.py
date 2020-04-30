@@ -5,6 +5,9 @@ from scipy import special
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
+ITER_STMT = 'Iter: {0:d}, Bound: {1:.2f}, Change: {2:.5f}'
+
+
 def _compute_expectations(a, return_exp=True):
     '''
     Computes the expectation of the log of x_n ~ Dir(a_n) \forall n \in [N].
@@ -31,8 +34,6 @@ def _compute_expectations(a, return_exp=True):
     else:
         return Elogx
 
- 
- ITER_STMT = 'Iter: {0:d}, Bound: {1:.2f}, Change: {2:.5f}'
 
 class LDA(BaseEstimator, TransformerMixin):
     def __init__(self, 
