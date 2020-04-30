@@ -6,12 +6,16 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 
 ITER_STMT = 'Iter: {0:d}, Bound: {1:.2f}, Change: {2:.5f}'
+EPOCH_STMT = 'Epoch: {0:d}'
+MINIBATCH_STMT = 'Minibatch: {0:d}, Bound: {1:.2f}'
+EPOCH_SUMMARY_STMT = 'Epoch: {0:d}, Avg Bound: {1:.2f}, Change: {2:.5f}'
 
 
 def _compute_expectations(a, return_exp=True):
     '''
-    Computes the expectation of the log of x_n ~ Dir(a_n) \forall n \in [N].
-    E[log(x_n)|a_n] = digamma(a_n) - digamma(sum_m a_{nm}) \forall m \in [M]. 
+    Computes the expectation of [the log of] x_n ~ Dir(a_n).
+    E[x_n] = \frac{a_n}{sum_m a_{nm}}.
+    E[log(x_n)|a_n] = digamma(a_n) - digamma(sum_m a_{nm}). 
 
     Parameters
     ----------
@@ -20,21 +24,24 @@ def _compute_expectations(a, return_exp=True):
 
     Returns
     -------
+    Ex : array-like, shape (N x M)
     Elogx : array-like, shape (N x M)
     exp^{Elogx} : if return_exp is True, array-like, shape (N x M)
     '''
 
     if len(a.shape) == 1:
+        Ex = a / np.sum(a)
         Elogx = special.psi(a) - special.psi(np.sum(a))
     else:    
+        Ex = a / np.sum(a, axis=1)[:, np.newaxis]
         Elogx = special.psi(a) - special.psi(np.sum(a, axis=1)[:, np.newaxis])
 
     if return_exp:
-        return Elogx, np.exp(Elogx)
+        return Ex, Elogx, np.exp(Elogx)
     else:
-        return Elogx
-
-
+        return Ex, Elogx
+    
+    
 class LDA(BaseEstimator, TransformerMixin):
     def __init__(self, 
                  K=15, 
@@ -66,14 +73,14 @@ class LDA(BaseEstimator, TransformerMixin):
         self.gamma = np.random.gamma(self.smoothness, 
                                      scale = 1.0 / self.smoothness, 
                                      size=(D, self.K))
-        self.Elogt, self.eElogt = _compute_expectations(self.gamma)
+        self.Et, self.Elogt, self.eElogt = _compute_expectations(self.gamma)
         
     # global
     def _init_qbeta(self, V):
         self.lambd = np.random.gamma(self.smoothness, 
                                      scale = 1.0 / self.smoothness, 
                                      size=(self.K, V))
-        self.Elogb, self.eElogb = _compute_expectations(self.lambd)
+        self.Eb, self.Elogb, self.eElogb = _compute_expectations(self.lambd)
 
     def fit(self, X):
         D, V = X.shape
@@ -105,7 +112,7 @@ class LDA(BaseEstimator, TransformerMixin):
             elbo_new = self._bound(X)
             chg = (elbo_new - elbo_old) / abs(elbo_old)
             
-            if self.verbose and i % 10 == 0:
+            if self.verbose and update_beta:
                 print(ITER_STMT.format(i, elbo_new, chg))
 
             if chg < self.tolerance:
@@ -135,11 +142,11 @@ class LDA(BaseEstimator, TransformerMixin):
                 if chg < self.tolerance:
                     break
 
-                eElogt_d, _ = _compute_expectations(gamma_d)
+                _, _, eElogt_d = _compute_expectations(gamma_d)
 
             self.gamma[d, :] = gamma_d
 
-        self.Elogt, self.eElogt = _compute_expectations(self.gamma)
+        self.Et, self.Elogt, self.eElogt = _compute_expectations(self.gamma)
         
     def _update_beta(self, X): 
         D, V = X.shape
@@ -150,7 +157,7 @@ class LDA(BaseEstimator, TransformerMixin):
             total += np.outer(self.eElogt[d, :], counts_d / self._phisum(d))
 
         self.lambd = self.eta + total * self.eElogb
-        self.Elogb, self.eElogb = _compute_expectations(self.lambd)
+        self.Eb, self.Elogb, self.eElogb = _compute_expectations(self.lambd)
 
     def _phisum(self, d, eElogt_d=None):
         ''' 
@@ -188,4 +195,131 @@ class LDA(BaseEstimator, TransformerMixin):
         bound += np.sum(special.gammaln(self.lambd))
         bound -= np.sum(special.gammaln(np.sum(self.lambd, 1)))
 
+        return bound
+    
+    
+class StochasticLDA(LDA):
+    def __init__(self, 
+                 K=15, 
+                 n_epochs=5,
+                 minibatch_size=100,
+                 shuffle=True,
+                 max_iters=100, 
+                 tolerance=0.0005, 
+                 smoothness=100, 
+                 random_state=22690, 
+                 verbose=False,
+                 **kwargs):
+        self.K = K
+        self.n_epochs = n_epochs
+        self.minibatch_size = minibatch_size
+        self.shuffle = shuffle
+        self.max_iters = max_iters
+        self.tolerance = tolerance
+        self.smoothness = smoothness
+        self.random_state = random_state
+        self.verbose = verbose
+
+        if type(self.random_state) is int:
+            np.random.seed(self.random_state)
+
+        self._parse_kwargs(**kwargs)
+
+    def _parse_kwargs(self, **kwargs):
+        self.alpha = float(kwargs.get('alpha', 0.1))
+        self.eta = float(kwargs.get('eta', 0.1))
+        self.tau = float(kwargs.get('tau', 1.))
+        self.kappa = float(kwargs.get('kappa', 0.6))
+
+    def fit(self, X):
+        D, V = X.shape
+
+        self._scale = float(D) / self.minibatch_size
+        self._init_qbeta(V)
+        self.bound = []
+
+        elbo_old = -np.inf
+        for e in range(self.n_epochs):
+            if self.verbose:
+                print(EPOCH_STMT.format(e + 1))
+
+            idxs = np.arange(D)
+            if self.shuffle:
+                np.random.shuffle(idxs)
+
+            elbo_new = 0
+            X_shuffled = X[idxs, :]
+            for (t, start) in enumerate(range(0, D, self.minibatch_size), 1):
+                self.set_step_size(t=t)
+
+                end = min(start + self.minibatch_size, D)
+                minibatch = X_shuffled[start:end, :]
+                self.partial_fit(minibatch)
+
+                elbo = self._stochastic_bound(minibatch)
+                elbo_new += elbo
+
+                if self.verbose:
+                    print(MINIBATCH_STMT.format(t, elbo))
+
+                self.bound.append(elbo)
+
+            elbo_new /= t
+            chg = (elbo_new - elbo_old) / abs(elbo_old)
+
+            if self.verbose:
+                print(EPOCH_SUMMARY_STMT.format(e + 1, elbo_new, chg))
+
+            if chg < self.tolerance:
+                break
+
+            elbo_old = elbo_new
+
+        return self
+
+    def partial_fit(self, X):
+        self.transform(X)
+        
+        D, V = X.shape
+        total = np.zeros((self.K, V))
+
+        for d in range(D):
+            counts_d = X[d, :]
+            total += np.outer(self.eElogt[d, :], counts_d / self._phisum(d))
+
+        lambd_new = self.eta + self._scale * total * self.eElogb
+        self.lambd = (1 - self.rho) * self.lambd + self.rho * lambd_new
+        self.Eb, self.Elogb, self.eElogb = _compute_expectations(self.lambd)
+
+        return self
+        
+    def set_step_size(self, t=None):
+        if t is not None:
+            self.rho = (t + self.tau)**(-self.kappa)
+        else:
+            raise ValueError('Cannot set step size.')
+
+        return self
+
+    def _stochastic_bound(self, X):
+        D = X.shape[0]
+        bound = 0
+
+        for d in range(D):
+            counts_d = X[d, :]
+            Eloglik_d = self.Elogb
+            phi_d = np.outer(self.eElogt[d, :], 1.0 / self._phisum(d)) * self.eElogb 
+            zterms_d = self.Elogt[d, :][:, np.newaxis] - np.log(phi_d)
+            bound += special.logsumexp(counts_d[np.newaxis, :] * phi_d * (Eloglik_d + zterms_d))
+
+        bound += np.sum((self.alpha - self.gamma) * self.Elogt)
+        bound += np.sum(special.gammaln(self.gamma))
+        bound -= np.sum(special.gammaln(np.sum(self.gamma, 1)))
+
+        bound *= self._scale
+
+        bound += np.sum((self.eta - self.lambd) * self.Elogb)
+        bound += np.sum(special.gammaln(self.lambd))
+        bound -= np.sum(special.gammaln(np.sum(self.lambd, 1)))
+        
         return bound
