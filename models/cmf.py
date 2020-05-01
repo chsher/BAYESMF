@@ -22,7 +22,7 @@ class CMF(BaseEstimator, TransformerMixin):
                  K=15, 
                  m=10,
                  num_steps=10,
-                 step_size=0.001,
+                 step_size=0.0001,
                  max_iters=100, 
                  tolerance=0.0005, 
                  smoothness=100, 
@@ -46,7 +46,7 @@ class CMF(BaseEstimator, TransformerMixin):
 
     def _parse_kwargs(self, **kwargs):
         self.c0 = float(kwargs.get('c0', 0.1))
-        self.sigma = float(kwargs.get('sigma', 1.0))
+        self.sigma = float(kwargs.get('sigma', 1.0 / self.m))
 
     def _init_qbeta(self, V):
         self.g = np.random.gamma(self.smoothness, 
@@ -57,30 +57,25 @@ class CMF(BaseEstimator, TransformerMixin):
                                  size=(V, self.K))
         self.Eb, self.Elogb = _compute_expectations(self.g, self.h)
 
-    # K x m
-    def _init_ql(self):
+    def _init_ql(self, D):
         mean = np.zeros(self.m)
         cov = self.sigma * np.eye(self.m)
-        self.l = np.random.multivariate_normal(mean, cov, self.K)
+        self.l = np.random.multivariate_normal(mean, cov, self.K) + np.random.random() * D
 
-    # D x m
     def _init_qu(self, D):
         mean = np.zeros(self.m)
         cov = np.eye(self.m)
         self.u = np.random.multivariate_normal(mean, cov, D)
 
-    def _init_alpha(self, D):
-        mean = 0
-        sd = 1
-        self.alpha = np.random.normal(mean, sd, D)
-
     def fit(self, X):
         V, D = X.shape
+
         self._init_qbeta(V)
-        self._init_ql()
+        self._init_ql(D)
         self._init_qu(D)
-        self._init_alpha(D)
+
         self._update(X)
+
         return self
 
     def transform(self, X, attr='l'):
@@ -101,12 +96,16 @@ class CMF(BaseEstimator, TransformerMixin):
     def _update(self, X, update_beta=True):
         elbo_old = -np.inf
         for i in range(self.max_iters):
-            self._update_ql(X)
-            self._update_qu(X)
             self._update_alpha(X)
+            print(self._bound(X))
+            self._update_ql(X)
+            print(self._bound(X))
+            self._update_qu(X)
+            print(self._bound(X))
 
             if update_beta:
                 self._update_beta(X)
+                print(self._bound(X))
 
             elbo_new = self._bound(X)
             chg = (elbo_new - elbo_old) / abs(elbo_old)
@@ -125,52 +124,52 @@ class CMF(BaseEstimator, TransformerMixin):
         theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
         xauxsum = X / self._auxsum(theta)
 
-        self.g = self.c0 / V + np.exp(self.Elogb) * np.dot(xauxsum, theta.T)
-        self.h = np.expand_dims(self.c0 + np.sum(np.exp(theta), axis=1), axis=0)
+        self.g = self.c0 / V + np.exp(self.Elogb) * np.dot(xauxsum, np.exp(theta).T)
+        self.h = np.tile(self.c0 + np.sum(np.exp(theta), axis=1), (V, 1))
 
         self.Eb, self.Elogb = _compute_expectations(self.g, self.h)
         
     def _update_ql(self, X):
-        for k in range(self.K):
-            Eb_k = self.Eb[:, k]
-            Elogb_k = self.Elogb[:, k]
-            
-            elbo_old = -1e08
-            for i, _ in enumerate(range(self.num_steps)):
+        for i, _ in enumerate(range(self.num_steps)):
+            l_temp = np.zeros(self.l.shape)
+
+            for k in range(self.K):
+                Eb_k = self.Eb[:, k]
+                Elogb_k = self.Elogb[:, k]
+                
                 theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
                 theta_k = theta[k, :]
                 xauxsum = X / self._auxsum(theta)
-            
+
                 grad = xauxsum * np.outer(np.exp(Elogb_k), np.exp(theta_k))
                 grad -= np.outer(Eb_k, np.exp(theta_k))
-                grad = np.dot(np.sum(grad, axis=0), self.u) - self.sigma**(-2) * self.l[k, :]
-    
-                #l_old = self.l
-                self.l[k, :] = self.l[k, :] - self.step_size * grad
-                #elbo_new = self._bound(X)
-                #if elbo_new < elbo_old:
-                #    print('bad elbo:', elbo_new)
-                #    self.l = l_old
-                #    break
-                #else:
-                #    elbo_old = elbo_new
+                grad = np.sum((grad[:, :, np.newaxis] * self.u - self.l[k, :]), axis=(0,1))
+                
+                l_temp[k, :] = self.l[k, :] + self.step_size * grad
+
+            self.l = l_temp
 
     def _update_qu(self, X):
         D = X.shape[1]
 
-        for d in range(D):
-            for i, _ in enumerate(range(self.num_steps)):
+        for i, _ in enumerate(range(self.num_steps)):
+            u_temp = np.zeros(self.u.shape)
+
+            for d in range(D):
                 theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
                 theta_d = theta[:, d]
                 xauxsum = X[:, d] / self._auxsum(theta_d)
-                
+
                 grad = xauxsum[:, np.newaxis] * np.exp(self.Elogb) * np.exp(theta_d[np.newaxis, :])
                 grad -= self.Eb * np.exp(theta_d[np.newaxis, :])
-                grad = np.dot(np.sum(grad, axis=0), self.l) - self.u[d, :]
-                self.u[d, :] = self.u[d, :] - self.step_size * grad
+                grad = np.sum((grad[:, :, np.newaxis] * self.l - self.u[d, :]), axis=(0,1))
+                
+                u_temp[d, :] = self.u[d, :] + self.step_size * grad
+
+            self.u = u_temp
 
     def _update_alpha(self, X):
-        self.alpha = np.log(np.sum(X, axis=0)) - np.log(np.sum(np.dot(self.Eb, np.exp(np.dot(self.l, self.u.T))), axis=0))
+        self.alpha = np.log(np.sum(X, axis=0)) - np.log(np.sum(self.Eb[:, :, np.newaxis] * np.exp(np.dot(self.l, self.u.T)), axis=(0,1)))
 
     def _auxsum(self, theta):
         ''' 
@@ -179,10 +178,10 @@ class CMF(BaseEstimator, TransformerMixin):
         theta: K x D
         auxsum: V x D
         '''
-        return np.dot(np.exp(self.Elogb), theta)
+        return np.dot(np.exp(self.Elogb), np.exp(theta))
 
     def _bound(self, X):
-        V, D = X.shape
+        V = X.shape[0]
 
         theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
         
