@@ -5,6 +5,9 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 
 ITER_STMT = 'Iter: {0:d}, Bound: {1:.2f}, Change: {2:.5f}'
+EPOCH_STMT = 'Epoch: {0:d}'
+MINIBATCH_STMT = 'Minibatch: {0:d}, Bound: {1:.2f}'
+EPOCH_SUMMARY_STMT = 'Epoch: {0:d}, Avg Bound: {1:.2f}, Change: {2:.5f}'
 
 
 def _compute_expectations(a, b):
@@ -190,5 +193,174 @@ class CMF(BaseEstimator, TransformerMixin):
                              self.h, self.Eb, self.Elogb)
         bound += np.sum(np.log(norm.pdf(self.l, 0, self.sigma)))
         bound += np.sum(np.log(norm.pdf(self.u, 0, 1)))
+
+        return bound
+
+    
+class StochasticCMF(CMF):
+    def __init__(self, 
+                 K=15, 
+                 m=10,
+                 num_steps=10,
+                 step_size=0.0001,
+                 n_epochs=5,
+                 minibatch_size=100,
+                 shuffle=True,
+                 max_iters=100, 
+                 tolerance=0.0005, 
+                 smoothness=100, 
+                 random_state=22690, 
+                 verbose=False,
+                 **kwargs):
+        self.K = K
+        self.m = m
+        self.num_steps = num_steps
+        self.step_size = step_size
+        self.n_epochs = n_epochs
+        self.minibatch_size = minibatch_size
+        self.shuffle = shuffle
+        self.max_iters = max_iters
+        self.tolerance = tolerance
+        self.smoothness = smoothness
+        self.random_state = random_state
+        self.verbose = verbose
+
+        if type(self.random_state) is int:
+            np.random.seed(self.random_state)
+
+        self._parse_kwargs(**kwargs)
+
+    def _parse_kwargs(self, **kwargs):
+        self.c0 = float(kwargs.get('c0', 0.1))
+        self.sigma = float(kwargs.get('sigma', 1.0 / self.m))
+        self.tau = float(kwargs.get('tau', 1.))
+        self.kappa = float(kwargs.get('kappa', 0.6))
+
+    def _init_ql(self, D):
+        mean = np.zeros(self.m)
+        cov = self.sigma * np.eye(self.m)
+        self.l = np.random.multivariate_normal(mean, cov, self.K) + np.random.random() * self._scale
+
+    def fit(self, X):
+        V, D = X.shape
+
+        self._scale = float(D) / self.minibatch_size
+
+        self._init_ql(D)
+        self._init_qbeta(V)
+
+        self.bound = []
+
+        elbo_old = -np.inf
+        for e in range(self.n_epochs):
+            if self.verbose:
+                print(EPOCH_STMT.format(e + 1))
+
+            idxs = np.arange(D)
+            if self.shuffle:
+                np.random.shuffle(idxs)
+
+            elbo_new = 0
+            X_shuffled = X[:, idxs]
+            for (t, start) in enumerate(range(0, D, self.minibatch_size), 1):
+                self.set_step_size(t=t)
+
+                end = min(start + self.minibatch_size, D)
+                minibatch = X_shuffled[:, start:end]
+                self.partial_fit(minibatch)
+
+                elbo = self._stochastic_bound(minibatch)
+                elbo_new += elbo
+
+                if self.verbose:
+                    print(MINIBATCH_STMT.format(t, elbo))
+
+                self.bound.append(elbo)
+
+            elbo_new /= t
+            chg = (elbo_new - elbo_old) / abs(elbo_old)
+
+            if self.verbose:
+                print(EPOCH_SUMMARY_STMT.format(e + 1, elbo_new, chg))
+
+            if chg < self.tolerance:
+                break
+
+            elbo_old = elbo_new
+
+        return self
+
+    def partial_fit(self, X):
+        self.transform(X)
+        #print('PF', self._bound(X))
+        self._stochastic_update_ql(X)
+        print('PF', self._bound(X))
+        self._stochastic_update_beta(X)
+        print('PF', self._bound(X))
+
+        return self
+        
+    def _stochastic_update_ql(self, X):
+        l_temp = np.zeros(self.l.shape)
+
+        for k in range(self.K):
+            Eb_k = self.Eb[:, k]
+            Elogb_k = self.Elogb[:, k]
+            
+            theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
+            theta_k = theta[k, :]
+            xauxsum = X / self._auxsum(theta)
+
+            grad = xauxsum * np.outer(np.exp(Elogb_k), np.exp(theta_k))
+            grad -= np.outer(Eb_k, np.exp(theta_k))
+            grad = np.sum((grad[:, :, np.newaxis] * self.u - self.l[k, :]), axis=(0,1))
+            
+            G = self._calc_G(Eb_k, theta_k)
+            l_temp[k, :] = self.l[k, :] + self.rho * np.dot(G, grad)
+
+        self.l = l_temp
+
+    def _stochastic_update_beta(self, X):
+        V = X.shape[0]
+
+        theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
+        xauxsum = X / self._auxsum(theta)
+
+        self.g = (1 - self.rho) * self.g + self.rho * (self.c0 / V + self._scale * \
+                                                       np.exp(self.Elogb) * np.dot(xauxsum, np.exp(theta).T))
+        self.h = (1 - self.rho) * self.h + self.rho * (np.tile(self.c0 + self._scale \
+                                                               * np.sum(np.exp(theta), axis=1), (V, 1)))
+        
+        self.Eb, self.Elogb = _compute_expectations(self.g, self.h)
+
+    def _calc_G(self, Eb_k, theta_k):
+        g1 = np.outer(Eb_k, np.exp(theta_k)) # V x D  
+        g2 = np.einsum('ij,ik->ijk', self.u, self.u)
+        g12 = np.sum((g1[:, :, np.newaxis, np.newaxis] * g2), axis=(0,1))
+
+        G_inv = self.sigma**(-2) * np.eye(self.m) + self._scale * g12
+
+        return np.linalg.inv(G_inv)
+
+    def set_step_size(self, t=None):
+        if t is not None:
+            self.rho = (t + self.tau)**(-self.kappa)
+        else:
+            raise ValueError('Cannot set step size.')
+        return self
+
+    def _stochastic_bound(self, X):
+        V = X.shape[0]
+
+        theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
+        
+        bound = np.sum(X * np.log(self._auxsum(theta)) - np.dot(self.Eb, theta))
+        bound += np.sum(np.log(norm.pdf(self.u, 0, 1)))
+
+        bound *= self._scale
+
+        bound += _gamma_term(self.c0, self.c0 / V, self.g, 
+                             self.h, self.Eb, self.Elogb)
+        bound += np.sum(np.log(norm.pdf(self.l, 0, self.sigma)))
 
         return bound
