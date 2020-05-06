@@ -2,7 +2,6 @@
 
 import numpy as np
 from scipy import special
-#from scipy.special import logsumexp
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
@@ -12,12 +11,23 @@ MINIBATCH_STMT = 'Minibatch: {0:d}'
 
 
 def _compute_expectations(a, b):
+    '''
+    Computes the expectation of X and of log(X),
+    where X ~ Gamma(a, b) with shape parameter
+    a and rate parameter b.
+    '''
     Ex = a / b
     Elogx = special.psi(a) - np.log(b) 
     return Ex, Elogx
 
 
 def _gamma_term(a, b, shape, rate, Ex, Elogx):
+    '''
+    Computes E_q[p(X)] - E_q[q(X)] where:
+        p(X) = Gamma(a, b)
+        q(X) = Gamma(shape, rate)
+    excluding constant terms wrt X, shape, rate.
+    '''
     return np.sum((a - shape) * Elogx - (b - rate) * Ex +
                   special.gammaln(shape) - shape * np.log(rate)) 
 

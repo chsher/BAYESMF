@@ -3,21 +3,15 @@ from scipy import special
 from scipy.stats import norm
 from sklearn.base import BaseEstimator, TransformerMixin
 
+import sys
+sys.path.append('/home/sxchao')
+from bayesmf.models.bmf import _compute_expectations, _gamma_term
+
 
 ITER_STMT = 'Iter: {0:d}, Bound: {1:.2f}, Change: {2:.5f}'
 EPOCH_STMT = 'Epoch: {0:d}'
 MINIBATCH_STMT = 'Minibatch: {0:d}, Bound: {1:.2f}'
 EPOCH_SUMMARY_STMT = 'Epoch: {0:d}, Avg Bound: {1:.2f}, Change: {2:.5f}'
-
-
-def _compute_expectations(a, b):
-    Ex = a / b
-    Elogx = special.psi(a) - np.log(b) 
-    return Ex, Elogx
-
-def _gamma_term(a, b, shape, rate, Ex, Elogx):
-    return np.sum((a - shape) * Elogx - (b - rate) * Ex +
-                  special.gammaln(shape) - shape * np.log(rate)) 
                   
 
 class CMF(BaseEstimator, TransformerMixin):
@@ -100,15 +94,11 @@ class CMF(BaseEstimator, TransformerMixin):
         elbo_old = -np.inf
         for i in range(self.max_iters):
             self._update_alpha(X)
-            print(self._bound(X))
             self._update_ql(X)
-            print(self._bound(X))
             self._update_qu(X)
-            print(self._bound(X))
 
             if update_beta:
                 self._update_beta(X)
-                print(self._bound(X))
 
             elbo_new = self._bound(X)
             chg = (elbo_new - elbo_old) / abs(elbo_old)
@@ -172,14 +162,21 @@ class CMF(BaseEstimator, TransformerMixin):
             self.u = u_temp
 
     def _update_alpha(self, X):
-        self.alpha = np.log(np.sum(X, axis=0)) - np.log(np.sum(self.Eb[:, :, np.newaxis] * np.exp(np.dot(self.l, self.u.T)), axis=(0,1)))
+        self.alpha = np.log(np.sum(X, axis=0)) - np.log(np.sum(self.Eb[:, :, np.newaxis] * 
+                                                               np.exp(np.dot(self.l, self.u.T)), axis=(0,1)))
 
     def _auxsum(self, theta):
         ''' 
         Sums the auxiliary parameter over the K dimension.
-        Elogb: V x K
-        theta: K x D
-        auxsum: V x D
+        
+        Parameters
+        ----------
+        Elogb : array-like, shape (V, K)
+        theta : array-like, shape (K, D)
+        
+        Returns
+        -------
+        auxsum : array-like, shape (V, D)
         '''
         return np.dot(np.exp(self.Elogb), np.exp(theta))
 
@@ -292,11 +289,8 @@ class StochasticCMF(CMF):
 
     def partial_fit(self, X):
         self.transform(X)
-        #print('PF', self._bound(X))
         self._stochastic_update_ql(X)
-        print('PF', self._bound(X))
         self._stochastic_update_beta(X)
-        print('PF', self._bound(X))
 
         return self
         
@@ -334,6 +328,10 @@ class StochasticCMF(CMF):
         self.Eb, self.Elogb = _compute_expectations(self.g, self.h)
 
     def _calc_G(self, Eb_k, theta_k):
+        '''
+        Computes the preconditioning matrix G, 
+        set to be the inverse negative Hessian.
+        '''
         g1 = np.outer(Eb_k, np.exp(theta_k)) # V x D  
         g2 = np.einsum('ij,ik->ijk', self.u, self.u)
         g12 = np.sum((g1[:, :, np.newaxis, np.newaxis] * g2), axis=(0,1))

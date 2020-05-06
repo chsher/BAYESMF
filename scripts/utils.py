@@ -1,15 +1,19 @@
 import time
 from tqdm import tqdm
 from tqdm.auto import trange
+
 import numpy as np
+from sklearn.metrics import mean_squared_error
 from sklearn.decomposition import non_negative_factorization
 
 import sys
 sys.path.append('/home/sxchao')
 from bayesmf.models.nmf import VanillaNMF, ConsensusNMF
-from bayesmf.models.bmf import BayesMF, OnlineBayesMF
-
-
+from bayesmf.models.lda import BMF, StochasticLDA
+from bayesmf.models.bmf import BMF, StochasticBMF
+from bayesmf.models.cmf import BMF, StochasticCMF
+    
+    
 def workhorse(X_train, X_test, n_components, method, random_state=22690):
     if method == 'vanilla':
         W, H, err = VanillaNMF(X_train.T, n_components=n_components)
@@ -36,7 +40,8 @@ def workhorse(X_train, X_test, n_components, method, random_state=22690):
     else:
         print('invalid method')
 
-    return np.sqrt(np.sum((X_test.T - np.matmul(W, H)) ** 2) / X_test.size)
+    #return np.sqrt(np.sum((X_test.T - np.matmul(W, H)) ** 2) / X_test.size)
+    return mean_squared_error(X_test.T, np.matmul(W,H), squared=False)
 
 
 def run_kfold_xval(X, kfold=5, random_state=22690, 
@@ -53,15 +58,15 @@ def run_kfold_xval(X, kfold=5, random_state=22690,
     errs = {k:{v:[] for v in methods} for k in components}
     durs = {k:{v:[] for v in methods} for k in components}
 
-    #for n_components in tqdm(components):
     for nc in trange(len(components), desc='k-soln'):
         n_components = components[nc]
-        #for k in tqdm(range(kfold)):
+        
         for k in trange(kfold, desc='method'):
             idxs_train = [i for j in np.setdiff1d(np.arange(kfold), k) for i in splits[j]]
             idxs_test = splits[k]
             X_train = X[:, idxs_train]
             X_test = X[:, idxs_test]
+            
             for method in methods:
                 start = time.time()
                 err = workhorse(X_train, X_test, n_components, method)

@@ -28,7 +28,6 @@ def _compute_expectations(a, return_exp=True):
     Elogx : array-like, shape (N x M)
     exp^{Elogx} : if return_exp is True, array-like, shape (N x M)
     '''
-
     if len(a.shape) == 1:
         Ex = a / np.sum(a)
         Elogx = special.psi(a) - special.psi(np.sum(a))
@@ -172,7 +171,7 @@ class LDA(BaseEstimator, TransformerMixin):
         D = X.shape[0]
         bound = 0
 
-        # E[ E[log p(docs | theta, z, beta)] + E[log p(z | theta)] - log q(z) ]
+        # E[ E[ log p(docs | theta, z, beta)] + E[log p(z | theta) ] - log q(z) ]
         for d in range(D):
             counts_d = X[d, :]
             Eloglik_d = self.Elogb
