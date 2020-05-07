@@ -1,3 +1,4 @@
+import os
 import time
 from tqdm import tqdm
 from tqdm.auto import trange
@@ -8,7 +9,7 @@ from sklearn.metrics import mean_squared_error
 from sklearn.decomposition import non_negative_factorization
 
 import sys
-sys.path.append('/home/sxchao')
+sys.path.append(os.path.dirname(os.path.dirname(os.getcwd())))
 from bayesmf.models.nmf import VanillaNMF, ConsensusNMF
 from bayesmf.models.lda import LDA, StochasticLDA
 from bayesmf.models.bmf import BMF, StochasticBMF
@@ -34,9 +35,9 @@ def workhorse(X_train, X_test, n_components, model, algorithm, random_state=2269
         
     elif model == 'lda':
         if algorithm == 'batch':
-            factorizer = LDA(K = n_components, random_state=random_state, init=init)
+            factorizer = LDA(K=n_components, random_state=random_state, init=init)
         elif algorithm == 'stochastic':
-            factorizer = StochasticLDA(K = n_components, random_state=random_state, init=init)
+            factorizer = StochasticLDA(K=n_components, random_state=random_state, init=init)
         try:
             factorizer.fit(X_train.T) # V x D -> D x V
             W = factorizer.transform(X_test.T, attr='Et') # D x K
@@ -46,9 +47,9 @@ def workhorse(X_train, X_test, n_components, model, algorithm, random_state=2269
         
     elif model == 'bmf':
         if algorithm == 'batch':
-            factorizer = BMF(K = n_components, random_state=random_state, init=init)
+            factorizer = BMF(K=n_components, random_state=random_state, init=init)
         elif algorithm == 'stochastic':
-            factorizer = StochasticBMF(K = n_components, random_state=random_state, init=init)
+            factorizer = StochasticBMF(K=n_components, random_state=random_state, init=init)
         try:
             factorizer.fit(X_train) # V x D
             W = factorizer.transform(X_test, attr='Et').T # K x D -> D x K
@@ -58,10 +59,10 @@ def workhorse(X_train, X_test, n_components, model, algorithm, random_state=2269
         
     elif model == 'cmf':
         if algorithm == 'batch':
-            factorizer = CMF(K = n_components, random_state=random_state, init=init, 
+            factorizer = CMF(K=n_components, m=n_components-5, random_state=random_state, init=init, 
                              kwargs={'c0':0.05 * X_train.shape[0]})
         elif algorithm == 'stochastic':
-            factorizer = StochasticCMF(K = n_components, random_state=random_state, init=init, 
+            factorizer = StochasticCMF(K=n_components, m=n_components-5, random_state=random_state, init=init, 
                                        kwargs={'c0':0.05 * X_train.shape[0]})
         try:
             factorizer.fit(X_train) # V x D
@@ -74,15 +75,19 @@ def workhorse(X_train, X_test, n_components, model, algorithm, random_state=2269
     else:
         print('invalid model')
 
-    X_pred = np.matmul(W, H)
-    X_pred[X_pred == inf] = 0.0
-    X_pred[X_pred == -inf] = 0.0
-    X_pred[np.isnan(X_pred)] = 0.0
-    
-    return mean_squared_error(X_test.T, X_pred, squared=False)
+    try:
+        X_pred = np.matmul(W, H)
+        X_pred[X_pred == inf] = 0.0
+        X_pred[X_pred == -inf] = 0.0
+        X_pred[np.isnan(X_pred)] = 0.0
+        err = mean_squared_error(X_test.T, X_pred, squared=False)
+    except:
+        err = 0.0
+        
+    return err
 
 
-def run_kfold_xval(X, kfold=5, random_state=22690, 
+def run_kfold_xval(X, kfold=5, random_state=22690, init=None,
                    components = [5, 10, 15, 20, 25], 
                    methods = ['nmf-vanilla', 'nmf-consensus', 
                               'lda-batch', 'lda-stochastic',
@@ -114,7 +119,8 @@ def run_kfold_xval(X, kfold=5, random_state=22690,
                 algorithm = method.split('-')[1]
                 
                 start = time.time()
-                err = workhorse(X_train, X_test, n_components, model, algorithm)
+                err = workhorse(X_train, X_test, n_components, model, algorithm, 
+                                random_state=random_state, init=init)
                 end = time.time()
                 dur = end - start
                 print('Method: {0}, RMSE: {1:.3f}, Dur: {2:.3f}'.format(method, err, dur))

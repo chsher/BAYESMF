@@ -5,8 +5,9 @@ from scipy.stats import norm
 from sklearn.decomposition import NMF
 from sklearn.base import BaseEstimator, TransformerMixin
 
+import os
 import sys
-sys.path.append('/home/sxchao')
+sys.path.append(os.path.dirname(os.path.dirname(os.getcwd())))
 from bayesmf.models.bmf import _compute_expectations, _gamma_term
 
 

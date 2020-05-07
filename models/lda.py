@@ -76,7 +76,8 @@ class LDA(BaseEstimator, TransformerMixin):
                                          scale = 1.0 / self.smoothness, 
                                          size=(D, self.K))
         elif self.init == 'nmf':
-            self.gamma = self.W * np.sum(self.W, axis=1)
+            self.gamma = np.random.gamma(self.W * np.sum(self.W, axis=1) * self.smoothness, 
+                                         scale = np.ones((D, self.K)) / self.smoothness)
             
         self.Et, self.Elogt, self.eElogt = _compute_expectations(self.gamma)
         
@@ -87,7 +88,8 @@ class LDA(BaseEstimator, TransformerMixin):
                                          scale = 1.0 / self.smoothness, 
                                          size=(self.K, V))
         elif self.init == 'nmf':
-            self.lambd = self.H * np.sum(self.H, axis=1)
+            self.lambd = np.random.gamma(self.H * np.sum(self.H, axis=1) * self.smoothness, 
+                                         scale = np.ones((self.K, V)) / self.smoothness)
             
         self.Eb, self.Elogb, self.eElogb = _compute_expectations(self.lambd)
 
