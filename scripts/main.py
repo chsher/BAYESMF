@@ -4,4 +4,7 @@ from bayesmf.scripts.utils import run_kfold_xval
 
 
 if __name__ == "__main__":
-    errs, durs = run_kfold_xval()
+    # TO DO: define X
+    
+    errs, durs = run_kfold_xval(X)
+    

@@ -1,6 +1,8 @@
 import numpy as np
+from numpy import inf
 from scipy import special
 from scipy.stats import norm
+from sklearn.decomposition import NMF
 from sklearn.base import BaseEstimator, TransformerMixin
 
 import sys
@@ -12,14 +14,14 @@ ITER_STMT = 'Iter: {0:d}, Bound: {1:.2f}, Change: {2:.5f}'
 EPOCH_STMT = 'Epoch: {0:d}'
 MINIBATCH_STMT = 'Minibatch: {0:d}, Bound: {1:.2f}'
 EPOCH_SUMMARY_STMT = 'Epoch: {0:d}, Avg Bound: {1:.2f}, Change: {2:.5f}'
-                  
-
+                        
+        
 class CMF(BaseEstimator, TransformerMixin):
     def __init__(self, 
                  K=15, 
                  m=10,
-                 num_steps=10,
-                 step_size=0.0001,
+                 num_steps=1,
+                 step_size=1e-05,
                  max_iters=100, 
                  tolerance=0.0005, 
                  smoothness=100, 
@@ -44,7 +46,7 @@ class CMF(BaseEstimator, TransformerMixin):
     def _parse_kwargs(self, **kwargs):
         self.c0 = float(kwargs.get('c0', 0.1))
         self.sigma = float(kwargs.get('sigma', 1.0 / self.m))
-
+        
     def _init_qbeta(self, V):
         self.g = np.random.gamma(self.smoothness, 
                                  scale = 1.0 / self.smoothness, 
@@ -57,7 +59,7 @@ class CMF(BaseEstimator, TransformerMixin):
     def _init_ql(self, D):
         mean = np.zeros(self.m)
         cov = self.sigma * np.eye(self.m)
-        self.l = np.random.multivariate_normal(mean, cov, self.K) + np.random.random() * D
+        self.l = np.random.multivariate_normal(mean, cov, self.K)# + np.random.random() * D
 
     def _init_qu(self, D):
         mean = np.zeros(self.m)
@@ -66,7 +68,7 @@ class CMF(BaseEstimator, TransformerMixin):
 
     def fit(self, X):
         V, D = X.shape
-
+        
         self._init_qbeta(V)
         self._init_ql(D)
         self._init_qu(D)
@@ -83,21 +85,20 @@ class CMF(BaseEstimator, TransformerMixin):
         if not self.Eb.shape[0] == V:
             raise ValueError('Feature dim mismatch.')
 
-        self._init_ql()
         self._init_qu(D)
-        self._init_alpha(D)
-        self._update(X, update_beta=False)
+
+        self._update(X, update_globals=False)
 
         return getattr(self, attr)
 
-    def _update(self, X, update_beta=True):
+    def _update(self, X, update_globals=True):
         elbo_old = -np.inf
         for i in range(self.max_iters):
             self._update_alpha(X)
-            self._update_ql(X)
             self._update_qu(X)
 
-            if update_beta:
+            if update_globals:
+                self._update_ql(X)
                 self._update_beta(X)
 
             elbo_new = self._bound(X)
@@ -133,11 +134,10 @@ class CMF(BaseEstimator, TransformerMixin):
                 theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
                 theta_k = theta[k, :]
                 xauxsum = X / self._auxsum(theta)
-
+                
                 grad = xauxsum * np.outer(np.exp(Elogb_k), np.exp(theta_k))
                 grad -= np.outer(Eb_k, np.exp(theta_k))
                 grad = np.sum((grad[:, :, np.newaxis] * self.u - self.l[k, :]), axis=(0,1))
-                
                 l_temp[k, :] = self.l[k, :] + self.step_size * grad
 
             self.l = l_temp
@@ -152,7 +152,7 @@ class CMF(BaseEstimator, TransformerMixin):
                 theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
                 theta_d = theta[:, d]
                 xauxsum = X[:, d] / self._auxsum(theta_d)
-
+                
                 grad = xauxsum[:, np.newaxis] * np.exp(self.Elogb) * np.exp(theta_d[np.newaxis, :])
                 grad -= self.Eb * np.exp(theta_d[np.newaxis, :])
                 grad = np.sum((grad[:, :, np.newaxis] * self.l - self.u[d, :]), axis=(0,1))
@@ -162,9 +162,9 @@ class CMF(BaseEstimator, TransformerMixin):
             self.u = u_temp
 
     def _update_alpha(self, X):
-        self.alpha = np.log(np.sum(X, axis=0)) - np.log(np.sum(self.Eb[:, :, np.newaxis] * 
-                                                               np.exp(np.dot(self.l, self.u.T)), axis=(0,1)))
-
+        a = np.log(np.sum(self.Eb[:, :, np.newaxis] * np.exp(np.dot(self.l, self.u.T)), axis=(0,1)) + 1e-100)
+        self.alpha = np.log(np.sum(X, axis=0) + 1e-100) - a
+        
     def _auxsum(self, theta):
         ''' 
         Sums the auxiliary parameter over the K dimension.
@@ -177,7 +177,7 @@ class CMF(BaseEstimator, TransformerMixin):
         Returns
         -------
         auxsum : array-like, shape (V, D)
-        '''
+        '''  
         return np.dot(np.exp(self.Elogb), np.exp(theta))
 
     def _bound(self, X):
@@ -185,27 +185,27 @@ class CMF(BaseEstimator, TransformerMixin):
 
         theta = self.alpha[np.newaxis, :] + np.dot(self.l, self.u.T)
         
-        bound = np.sum(X * np.log(self._auxsum(theta)) - np.dot(self.Eb, theta))
+        bound = np.sum(X * np.log(self._auxsum(theta) + + 1e-100) - np.dot(self.Eb, theta))
         bound += _gamma_term(self.c0, self.c0 / V, self.g, 
                              self.h, self.Eb, self.Elogb)
-        bound += np.sum(np.log(norm.pdf(self.l, 0, self.sigma)))
-        bound += np.sum(np.log(norm.pdf(self.u, 0, 1)))
+        bound += np.sum(np.log(norm.pdf(self.l, 0, self.sigma) + 1e-100))
+        bound += np.sum(np.log(norm.pdf(self.u, 0, 1) + 1e-100))
 
         return bound
-
+    
     
 class StochasticCMF(CMF):
     def __init__(self, 
                  K=15, 
-                 m=10,
-                 num_steps=10,
-                 step_size=0.0001,
+                 m=15,
+                 num_steps=30,
+                 step_size=1e-05,
                  n_epochs=5,
                  minibatch_size=100,
                  shuffle=True,
                  max_iters=100, 
                  tolerance=0.0005, 
-                 smoothness=100, 
+                 smoothness=300, 
                  random_state=22690, 
                  verbose=False,
                  **kwargs):
@@ -264,6 +264,7 @@ class StochasticCMF(CMF):
 
                 end = min(start + self.minibatch_size, D)
                 minibatch = X_shuffled[:, start:end]
+                
                 self.partial_fit(minibatch)
 
                 elbo = self._stochastic_bound(minibatch)

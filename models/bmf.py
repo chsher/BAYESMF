@@ -2,12 +2,14 @@
 
 import numpy as np
 from scipy import special
+from sklearn.decomposition import NMF
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
 ITER_STMT = 'Iter: {0:d}, Bound: {1:.2f}, Change: {2:.5f}'
 EPOCH_STMT = 'Epoch: {0:d}'
-MINIBATCH_STMT = 'Minibatch: {0:d}'
+MINIBATCH_STMT = 'Minibatch: {0:d}, Bound: {1:.2f}'
+EPOCH_SUMMARY_STMT = 'Epoch: {0:d}, Avg Bound: {1:.2f}, Change: {2:.5f}'
 
 
 def _compute_expectations(a, b):
@@ -18,6 +20,7 @@ def _compute_expectations(a, b):
     '''
     Ex = a / b
     Elogx = special.psi(a) - np.log(b) 
+    
     return Ex, Elogx
 
 
@@ -40,6 +43,7 @@ class BMF(BaseEstimator, TransformerMixin):
                  smoothness=100, 
                  random_state=22690, 
                  verbose=False,
+                 init=None,
                  **kwargs):
         self.K = K
         self.max_iters = max_iters
@@ -47,7 +51,8 @@ class BMF(BaseEstimator, TransformerMixin):
         self.smoothness = smoothness
         self.random_state = random_state
         self.verbose = verbose
-
+        self.init = init
+        
         if type(self.random_state) is int:
             np.random.seed(self.random_state)
 
@@ -59,28 +64,48 @@ class BMF(BaseEstimator, TransformerMixin):
         self.c0 = float(kwargs.get('c0', 0.1))
 
     def _init_qbeta(self, V):
-        self.g = np.random.gamma(self.smoothness, 
-                                 scale = 1.0 / self.smoothness, 
-                                 size=(V, self.K))
+        if self.init is None:
+            self.g = np.random.gamma(self.smoothness, 
+                                     scale = 1.0 / self.smoothness, 
+                                     size=(V, self.K))
+        elif self.init == 'nmf':
+            self.g = np.random.gamma((self.H.T + 1.0) * self.smoothness, 
+                                     scale = np.ones((V, self.K)) / self.smoothness)
+            
         self.h = np.random.gamma(self.smoothness, 
                                  scale = 1.0 / self.smoothness, 
                                  size=(V, self.K))
+        
         self.Eb, self.Elogb = _compute_expectations(self.g, self.h)
-
+        
     def _init_qtheta(self, D):
-        self.a = np.random.gamma(self.smoothness, 
-                                 scale = 1.0 / self.smoothness, 
-                                 size=(self.K, D))
+        if self.init is None:
+            self.a = np.random.gamma(self.smoothness, 
+                                     scale = 1.0 / self.smoothness, 
+                                     size=(self.K, D))
+        elif self.init == 'nmf':
+            self.a = np.random.gamma((self.W.T + 1.0) * self.smoothness, 
+                                     scale = np.ones((self.K, D)) / self.smoothness)
+           
         self.b = np.random.gamma(self.smoothness, 
                                  scale = 1.0 / self.smoothness, 
                                  size=(self.K, D))
+        
         self.Et, self.Elogt = _compute_expectations(self.a, self.b)
-
+        
     def fit(self, X):
         V, D = X.shape
+        
+        if self.init == 'nmf':
+            model = NMF(n_components=self.K, random_state=self.random_state)
+            self.W = model.fit_transform(X.T)
+            self.H = model.components_
+            
         self._init_qbeta(V)
         self._init_qtheta(D)
+        
         self._update(X)
+        
         return self
 
     def transform(self, X, attr='Et'):
@@ -91,12 +116,20 @@ class BMF(BaseEstimator, TransformerMixin):
         if not self.Eb.shape[0] == V:
             raise ValueError('Feature dim mismatch.')
 
+        if self.init == 'nmf':
+            model = NMF(n_components=self.K, random_state=self.random_state)
+            self.W = model.fit_transform(X.T)
+            self.H = model.components_
+            
         self._init_qtheta(D)
+        
         self._update(X, update_beta=False)
+        
         return getattr(self, attr)
 
     def _update(self, X, update_beta=True):
         elbo_old = -np.inf
+        
         for i in range(self.max_iters):
             self._update_theta(X)
 
@@ -105,7 +138,6 @@ class BMF(BaseEstimator, TransformerMixin):
 
             elbo_new = self._bound(X)
             chg = (elbo_new - elbo_old) / abs(elbo_old)
-            #chg = np.exp(logsumexp(elbo_new - elbo_old) - logsumexp(elbo_old))
             
             if self.verbose and i % 10 == 0:
                 print(ITER_STMT.format(i, elbo_new, chg))
@@ -118,18 +150,18 @@ class BMF(BaseEstimator, TransformerMixin):
     def _update_beta(self, X): 
         V = X.shape[0]
         xauxsum = X / self._auxsum()
-        # (V x K) * (V x D) (K x D)^T
-        self.g = self.c0 / V + np.exp(self.Elogb) * np.dot(xauxsum, np.exp(self.Elogt).T)
-        #self.h = self.c0 + np.sum(self.Et, axis=1)
+        
+        self.g = self.c0 / V + np.exp(self.Elogb) * np.dot(xauxsum, np.exp(self.Elogt).T) #(V x K)*(V x D)(D x K)
         self.h = np.expand_dims(self.c0 + np.sum(self.Et, axis=1), axis=0)
+        
         self.Eb, self.Elogb = _compute_expectations(self.g, self.h)
         
     def _update_theta(self, X):
         xauxsum = X / self._auxsum()
-        # (K x D) * (V x K)^T (V x D)
-        self.a = self.a0 + np.exp(self.Elogt) * np.dot(np.exp(self.Elogb).T, xauxsum)
-        #self.b = self.b0 + np.sum(self.Eb, axis=0)
+        
+        self.a = self.a0 + np.exp(self.Elogt) * np.dot(np.exp(self.Elogb).T, xauxsum) # (K x D)*(K x V)(V x D)
         self.b = np.expand_dims(self.b0 + np.sum(self.Eb, axis=0), axis=1)
+        
         self.Et, self.Elogt = _compute_expectations(self.a, self.b)
 
     def _auxsum(self):
@@ -143,11 +175,13 @@ class BMF(BaseEstimator, TransformerMixin):
 
     def _bound(self, X):
         V, D = X.shape
+        
         bound = np.sum(X * np.log(self._auxsum()) - np.dot(self.Eb, self.Et))
         bound += _gamma_term(self.c0, self.c0 / V, self.g, 
                              self.h, self.Eb, self.Elogb)
         bound += _gamma_term(self.a0, self.b0, self.a, 
                              self.b, self.Et, self.Elogt)
+        
         return bound
 
 
@@ -162,6 +196,7 @@ class StochasticBMF(BMF):
                  smoothness=100, 
                  random_state=22690, 
                  verbose=False,
+                 init=None,
                  **kwargs):
         self.K = K
         self.n_epochs = n_epochs
@@ -172,6 +207,7 @@ class StochasticBMF(BMF):
         self.smoothness = smoothness
         self.random_state = random_state
         self.verbose = verbose
+        self.init = init
 
         if type(self.random_state) is int:
             np.random.seed(self.random_state)
@@ -189,9 +225,17 @@ class StochasticBMF(BMF):
         V, D = X.shape
 
         self._scale = float(D) / self.minibatch_size
+        
+        if self.init == 'nmf':
+            model = NMF(n_components=self.K, random_state=self.random_state)
+            self.W = model.fit_transform(X.T)
+            self.H = model.components_
+            
         self._init_qbeta(V)
+        
         self.bound = []
 
+        elbo_old = -np.inf
         for e in range(self.n_epochs):
             if self.verbose:
                 print(EPOCH_STMT.format(e + 1))
@@ -200,29 +244,50 @@ class StochasticBMF(BMF):
             if self.shuffle:
                 np.random.shuffle(idxs)
 
+            elbo_new = 0
             X_shuffled = X[:, idxs]
             for (t, start) in enumerate(range(0, D, self.minibatch_size), 1):
-                if self.verbose:
-                    print(MINIBATCH_STMT.format(t))
                 self.set_step_size(t=t)
 
                 end = min(start + self.minibatch_size, D)
                 minibatch = X_shuffled[:, start:end]
+                
                 self.partial_fit(minibatch)
 
-                self.bound.append(self._stochastic_bound(minibatch))
+                elbo = self._stochastic_bound(minibatch)
+                elbo_new += elbo
+
+                if self.verbose:
+                    print(MINIBATCH_STMT.format(t, elbo))
+
+                self.bound.append(elbo)
+
+            elbo_new /= t
+            chg = (elbo_new - elbo_old) / abs(elbo_old)
+
+            if self.verbose:
+                print(EPOCH_SUMMARY_STMT.format(e + 1, elbo_new, chg))
+
+            if chg < self.tolerance:
+                break
+
+            elbo_old = elbo_new
+
         return self
 
     def partial_fit(self, X):
         self.transform(X)
+        
         V = X.shape[0]
         xauxsum = X / self._auxsum()
-        # (V x K) * (V x D) (K x D)^T
+
         self.g = (1 - self.rho) * self.g + self.rho * (self.c0 / V + self._scale * np.exp(self.Elogb) \
                                                        * np.dot(xauxsum, np.exp(self.Elogt).T))
         self.h = (1 - self.rho) * self.h + self.rho * (np.expand_dims(self.c0 + self._scale * \
                                                                       np.sum(self.Et, axis=1), axis=0))
+        
         self.Eb, self.Elogb = _compute_expectations(self.g, self.h)
+        
         return self
         
     def set_step_size(self, t=None):
@@ -230,14 +295,17 @@ class StochasticBMF(BMF):
             self.rho = (t + self.tau)**(-self.kappa)
         else:
             raise ValueError('Cannot set step size.')
+            
         return self
 
     def _stochastic_bound(self, X):
         V, D = X.shape
+        
         bound = np.sum(X * np.log(self._auxsum()) - np.dot(self.Eb, self.Et))
         bound += _gamma_term(self.a0, self.b0, self.a, 
                             self.b, self.Et, self.Elogt)
         bound *= self._scale
         bound += _gamma_term(self.c0, self.c0 / V, self.g, 
                             self.h, self.Eb, self.Elogb)
+        
         return bound

@@ -27,11 +27,12 @@ def VanillaNMF(X, n_components=15, random_state=22690):
     model = NMF(n_components=n_components, random_state=random_state)
     W = model.fit_transform(X)
     H = model.components_
-    rmse = mean_squared_error(X, np.matmul(W,H), squared=False)
-    return W, H, rmse
+    err = mean_squared_error(X, np.matmul(W, H), squared=False)
+    
+    return W, H, err
 
 
-def ConsensusNMF(X, n_components=15, random_state=22690, cluster_method='dbscan', eps=3, interval=0, n_iters=50):
+def ConsensusNMF(X, n_components=15, random_state=22690, cluster_method='dbscan', eps=3, interval=4, n_iters=50):
     '''
     Computes non-negative matrices W, H whose product approximates X
     (where H is defined as the cluster centroids of multiple NMF runs)
@@ -63,7 +64,7 @@ def ConsensusNMF(X, n_components=15, random_state=22690, cluster_method='dbscan'
     rs = np.random.choice(np.arange(99999), size=n_iters, replace=False)
     
     cs = []
-    for n,r in ns,rs:
+    for n,r in zip(ns,rs):
         model = NMF(n_components=n, random_state=r)
         W = model.fit_transform(X)
         H = model.components_
@@ -94,7 +95,7 @@ def ConsensusNMF(X, n_components=15, random_state=22690, cluster_method='dbscan'
         print('invalid clustering method')
 
     W, H, _ = non_negative_factorization(X, H=H, n_components=n_components, update_H=False, 
-                                              init=None, random_state=random_state)
-    rmse = mean_squared_error(X, np.matmul(W,H), squared=False)
+                                         init=None, random_state=random_state)
+    err = mean_squared_error(X, np.matmul(W, H), squared=False)
 
-    return W, H, rmse
+    return W, H, err

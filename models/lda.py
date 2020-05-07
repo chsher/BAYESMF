@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy import special
+from sklearn.decomposition import NMF
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
@@ -45,18 +46,19 @@ class LDA(BaseEstimator, TransformerMixin):
     def __init__(self, 
                  K=15, 
                  max_iters=100, 
-                 tolerance=0.001, 
+                 tolerance=0.0005, 
                  smoothness=100, 
                  random_state=22690, 
                  verbose=False,
+                 init=None,
                  **kwargs):
-        
         self.K = K
         self.max_iters = max_iters
         self.tolerance = tolerance
         self.smoothness = smoothness
         self.random_state = random_state
         self.verbose = verbose
+        self.init = init
 
         if type(self.random_state) is int:
             np.random.seed(self.random_state)
@@ -69,23 +71,39 @@ class LDA(BaseEstimator, TransformerMixin):
 
     # local
     def _init_qtheta(self, D):
-        self.gamma = np.random.gamma(self.smoothness, 
-                                     scale = 1.0 / self.smoothness, 
-                                     size=(D, self.K))
+        if self.init is None:
+            self.gamma = np.random.gamma(self.smoothness, 
+                                         scale = 1.0 / self.smoothness, 
+                                         size=(D, self.K))
+        elif self.init == 'nmf':
+            self.gamma = self.W * np.sum(self.W, axis=1)
+            
         self.Et, self.Elogt, self.eElogt = _compute_expectations(self.gamma)
         
     # global
     def _init_qbeta(self, V):
-        self.lambd = np.random.gamma(self.smoothness, 
-                                     scale = 1.0 / self.smoothness, 
-                                     size=(self.K, V))
+        if self.init is None:
+            self.lambd = np.random.gamma(self.smoothness, 
+                                         scale = 1.0 / self.smoothness, 
+                                         size=(self.K, V))
+        elif self.init == 'nmf':
+            self.lambd = self.H * np.sum(self.H, axis=1)
+            
         self.Eb, self.Elogb, self.eElogb = _compute_expectations(self.lambd)
 
     def fit(self, X):
         D, V = X.shape
+        
+        if self.init == 'nmf':
+            model = NMF(n_components=self.K, random_state=self.random_state)
+            self.W = model.fit_transform(X)
+            self.H = model.components_
+
         self._init_qtheta(D)
         self._init_qbeta(V)
+        
         self._update(X)
+        
         return self
 
     def transform(self, X, attr='Et'):
@@ -96,12 +114,20 @@ class LDA(BaseEstimator, TransformerMixin):
         if not self.Eb.shape[1] == V:
             raise ValueError('Feature dim mismatch.')
 
+        if self.init == 'nmf':
+            model = NMF(n_components=self.K, random_state=self.random_state)
+            self.W = model.fit_transform(X)
+            self.H = model.components_
+            
         self._init_qtheta(D)
+        
         self._update(X, update_beta=False)
+        
         return getattr(self, attr)
 
     def _update(self, X, update_beta=True):
         elbo_old = -np.inf
+        
         for i in range(self.max_iters):
             self._update_theta(X)
 
@@ -175,11 +201,6 @@ class LDA(BaseEstimator, TransformerMixin):
         for d in range(D):
             counts_d = X[d, :]
             Eloglik_d = self.Elogb
-            # np.outer(a,b):
-            #  [ [a0*b0  a0*b1 ... a0*bV ]
-            #    [a1*b0    .
-            #    [ ...          .
-            #    [aK*b0            aK*bV ] ]
             phi_d = np.outer(self.eElogt[d, :], 1.0 / self._phisum(d)) * self.eElogb 
             zterms_d = self.Elogt[d, :][:, np.newaxis] - np.log(phi_d)
             bound += special.logsumexp(counts_d[np.newaxis, :] * phi_d * (Eloglik_d + zterms_d))
@@ -208,6 +229,7 @@ class StochasticLDA(LDA):
                  smoothness=100, 
                  random_state=22690, 
                  verbose=False,
+                 init=None,
                  **kwargs):
         self.K = K
         self.n_epochs = n_epochs
@@ -218,6 +240,7 @@ class StochasticLDA(LDA):
         self.smoothness = smoothness
         self.random_state = random_state
         self.verbose = verbose
+        self.init = init
 
         if type(self.random_state) is int:
             np.random.seed(self.random_state)
@@ -234,7 +257,14 @@ class StochasticLDA(LDA):
         D, V = X.shape
 
         self._scale = float(D) / self.minibatch_size
+        
+        if self.init == 'nmf':
+            model = NMF(n_components=self.K, random_state=self.random_state)
+            self.W = model.fit_transform(X)
+            self.H = model.components_
+            
         self._init_qbeta(V)
+        
         self.bound = []
 
         elbo_old = -np.inf
@@ -253,6 +283,7 @@ class StochasticLDA(LDA):
 
                 end = min(start + self.minibatch_size, D)
                 minibatch = X_shuffled[start:end, :]
+                
                 self.partial_fit(minibatch)
 
                 elbo = self._stochastic_bound(minibatch)
