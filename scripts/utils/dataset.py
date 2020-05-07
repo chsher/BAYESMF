@@ -59,13 +59,13 @@ def make_insilico_dataset(alpha=2, D=1000, K=15, V=100, random_state=22690, retu
         return X, sparsity
 
 
-def make_downsampled_dataset(D=1000, V=100, random_state=22690):
+def make_downsampled_dataset(D=1000, V=100, random_state=22690, return_genes=False):
     if type(random_state) is int:
         np.random.seed(random_state)
-        
+    
     adata = sc.read_h5ad(IN_PATH)
     adata.var_names_make_unique()
-    
+
     clusters = adata.obs['clFullc222'].unique()
     clusters_t = [x for x in clusters if x[0]=='T']
     adata_t = adata[adata.obs['clFullc222'].isin(clusters_t),:]
@@ -88,4 +88,7 @@ def make_downsampled_dataset(D=1000, V=100, random_state=22690):
     
     sparsity = np.count_nonzero(X == 0) / X.size
     
-    return X, sparsity
+    if return_genes:
+        return adata_t.var.index[genes_want]
+    else:
+        return X, sparsity
