@@ -9,10 +9,11 @@ HOME_PATH = '/home/sxchao/crc_atlas/c222/colon10x_c222_subClean/'
 IN_PATH = os.path.join(HOME_PATH, 'colon10x_c222_rawCount_042320.h5ad')
 
 
-def make_insilico_dataset(alpha=2, D=1000, K=15, V=100, random_state=22690):
+def make_insilico_dataset(alpha=2, D=1000, K=15, V=100, random_state=22690, return_assignments=False):
     if type(random_state) is int:
         np.random.seed(random_state)
 
+    table_assignments = [0]
     seating_chart = [[0]]
     num_tables = 1
     for d in range(1, D):
@@ -20,7 +21,8 @@ def make_insilico_dataset(alpha=2, D=1000, K=15, V=100, random_state=22690):
         probs /= sum(np.array(probs))
 
         table_assignment = np.random.choice(np.arange(num_tables + 1), p=probs)
-
+        table_assignments.append(table_assignment)
+        
         if table_assignment == num_tables:
             seating_chart.append([d])
             num_tables += 1
@@ -51,7 +53,10 @@ def make_insilico_dataset(alpha=2, D=1000, K=15, V=100, random_state=22690):
     
     sparsity = np.count_nonzero(X == 0) / X.size
     
-    return X, sparsity
+    if return_assignments:
+        return table_assignments
+    else:
+        return X, sparsity
 
 
 def make_downsampled_dataset(D=1000, V=100, random_state=22690):

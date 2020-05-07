@@ -40,7 +40,7 @@ def workhorse(X_train, X_test, n_components, model, algorithm, random_state=2269
             factorizer = StochasticLDA(K=n_components, random_state=random_state, init=init)
         try:
             factorizer.fit(X_train.T) # V x D -> D x V
-            W = factorizer.transform(X_test.T, attr='Et') # D x K
+            W = factorizer.transform(X_test.T, attr='Et') * np.sum(X_test, axis=0)[:,np.newaxis] # D x K
             H = factorizer.Eb # K x V
         except:
             print('error: lda')
