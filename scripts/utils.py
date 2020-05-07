@@ -15,16 +15,16 @@ from bayesmf.models.bmf import BMF, StochasticBMF
 from bayesmf.models.cmf import CMF, StochasticCMF
     
     
-def workhorse(X_train, X_test, n_components, model, algorithm, random_state=22690):
+def workhorse(X_train, X_test, n_components, model, algorithm, random_state=22690, init=None):
     '''
     model : ['nmf', 'lda', 'bmf', 'cmf']
     algorithm : ['vanilla', 'consensus', 'batch', stochastic']
     '''
     if model == 'nmf':
         if algorithm == 'vanilla':
-            W, H, err = VanillaNMF(X_train.T, n_components=n_components)
+            W, H, err = VanillaNMF(X_train.T, n_components=n_components, random_state=random_state)
         elif algorithm == 'consensus':
-            W, H, err = ConsensusNMF(X_train.T, n_components=n_components)
+            W, H, err = ConsensusNMF(X_train.T, n_components=n_components, random_state=random_state)
         try:
             W, H, n_iter = non_negative_factorization(X_test.T, H=H, n_components=n_components, 
                                                       update_H=False, init=None, 
@@ -34,9 +34,9 @@ def workhorse(X_train, X_test, n_components, model, algorithm, random_state=2269
         
     elif model == 'lda':
         if algorithm == 'batch':
-            factorizer = LDA(K = n_components)
+            factorizer = LDA(K = n_components, random_state=random_state, init=init)
         elif algorithm == 'stochastic':
-            factorizer = StochasticLDA(K = n_components)
+            factorizer = StochasticLDA(K = n_components, random_state=random_state, init=init)
         try:
             factorizer.fit(X_train.T) # V x D -> D x V
             W = factorizer.transform(X_test.T, attr='Et') # D x K
@@ -46,9 +46,9 @@ def workhorse(X_train, X_test, n_components, model, algorithm, random_state=2269
         
     elif model == 'bmf':
         if algorithm == 'batch':
-            factorizer = BMF(K = n_components, init='nmf')
+            factorizer = BMF(K = n_components, random_state=random_state, init=init)
         elif algorithm == 'stochastic':
-            factorizer = StochasticBMF(K = n_components, init='nmf')
+            factorizer = StochasticBMF(K = n_components, random_state=random_state, init=init)
         try:
             factorizer.fit(X_train) # V x D
             W = factorizer.transform(X_test, attr='Et').T # K x D -> D x K
@@ -58,9 +58,11 @@ def workhorse(X_train, X_test, n_components, model, algorithm, random_state=2269
         
     elif model == 'cmf':
         if algorithm == 'batch':
-            factorizer = CMF(K = n_components, kwargs={'c0':0.05 * X_train.shape[0]})
+            factorizer = CMF(K = n_components, random_state=random_state, init=init, 
+                             kwargs={'c0':0.05 * X_train.shape[0]})
         elif algorithm == 'stochastic':
-            factorizer = StochasticCMF(K = n_components, kwargs={'c0':0.05 * X_train.shape[0]})
+            factorizer = StochasticCMF(K = n_components, random_state=random_state, init=init, 
+                                       kwargs={'c0':0.05 * X_train.shape[0]})
         try:
             factorizer.fit(X_train) # V x D
             l = factorizer.transform(X_test, attr='l') # K x m

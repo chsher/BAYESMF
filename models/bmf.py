@@ -119,7 +119,6 @@ class BMF(BaseEstimator, TransformerMixin):
         if self.init == 'nmf':
             model = NMF(n_components=self.K, random_state=self.random_state)
             self.W = model.fit_transform(X.T)
-            self.H = model.components_
             
         self._init_qtheta(D)
         

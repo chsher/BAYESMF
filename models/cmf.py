@@ -27,6 +27,7 @@ class CMF(BaseEstimator, TransformerMixin):
                  smoothness=100, 
                  random_state=22690, 
                  verbose=False,
+                 init=None,
                  **kwargs):
         self.K = K
         self.m = m
@@ -37,6 +38,7 @@ class CMF(BaseEstimator, TransformerMixin):
         self.smoothness = smoothness
         self.random_state = random_state
         self.verbose = verbose
+        self.init = init
 
         if type(self.random_state) is int:
             np.random.seed(self.random_state)
@@ -48,27 +50,47 @@ class CMF(BaseEstimator, TransformerMixin):
         self.sigma = float(kwargs.get('sigma', 1.0 / self.m))
         
     def _init_qbeta(self, V):
-        self.g = np.random.gamma(self.smoothness, 
-                                 scale = 1.0 / self.smoothness, 
-                                 size=(V, self.K))
+        if self.init is None:
+            self.g = np.random.gamma(self.smoothness, 
+                                     scale = 1.0 / self.smoothness, 
+                                     size=(V, self.K))
+        elif self.init == 'nmf':
+            self.g = np.random.gamma((self.H.T + 1.0) * self.smoothness, 
+                                     scale = np.ones((V, self.K)) / self.smoothness)
+            
         self.h = np.random.gamma(self.smoothness, 
                                  scale = 1.0 / self.smoothness, 
                                  size=(V, self.K))
+        
         self.Eb, self.Elogb = _compute_expectations(self.g, self.h)
 
     def _init_ql(self, D):
-        mean = np.zeros(self.m)
-        cov = self.sigma * np.eye(self.m)
-        self.l = np.random.multivariate_normal(mean, cov, self.K)# + np.random.random() * D
-
+        if self.init is None:
+            mean = np.zeros(self.m)
+            cov = self.sigma * np.eye(self.m)
+            self.l = np.random.multivariate_normal(mean, cov, self.K)# + np.random.random() * D
+        elif self.init == 'nmf':
+            self.l = self.H_m.T
+            
     def _init_qu(self, D):
-        mean = np.zeros(self.m)
-        cov = np.eye(self.m)
-        self.u = np.random.multivariate_normal(mean, cov, D)
+        if self.init is None:
+            mean = np.zeros(self.m)
+            cov = np.eye(self.m)
+            self.u = np.random.multivariate_normal(mean, cov, D)
+        elif self.init == 'nmf':
+            self.u = self.W_m
 
     def fit(self, X):
         V, D = X.shape
         
+        if self.init == 'nmf':
+            model = NMF(n_components=self.K, random_state=self.random_state)
+            self.W = model.fit_transform(X.T)        # n_samples, n_components
+            self.H = model.components_               # n_components, n_features
+            model_m = NMF(n_components=self.m, random_state=self.random_state)
+            self.W_m = model_m.fit_transform(self.W) # n_samples, m
+            self.H_m = model_m.components_           # m, n_components
+            
         self._init_qbeta(V)
         self._init_ql(D)
         self._init_qu(D)
@@ -85,6 +107,12 @@ class CMF(BaseEstimator, TransformerMixin):
         if not self.Eb.shape[0] == V:
             raise ValueError('Feature dim mismatch.')
 
+        if self.init == 'nmf':
+            model = NMF(n_components=self.K, random_state=self.random_state)
+            self.W = model.fit_transform(X.T)
+            model_m = NMF(n_components=self.m, random_state=self.random_state)
+            self.W_m = model_m.fit_transform(self.W)
+            
         self._init_qu(D)
 
         self._update(X, update_globals=False)
@@ -93,6 +121,7 @@ class CMF(BaseEstimator, TransformerMixin):
 
     def _update(self, X, update_globals=True):
         elbo_old = -np.inf
+        
         for i in range(self.max_iters):
             self._update_alpha(X)
             self._update_qu(X)
@@ -208,6 +237,7 @@ class StochasticCMF(CMF):
                  smoothness=300, 
                  random_state=22690, 
                  verbose=False,
+                 init=None,
                  **kwargs):
         self.K = K
         self.m = m
@@ -221,6 +251,7 @@ class StochasticCMF(CMF):
         self.smoothness = smoothness
         self.random_state = random_state
         self.verbose = verbose
+        self.init = init
 
         if type(self.random_state) is int:
             np.random.seed(self.random_state)
@@ -243,6 +274,14 @@ class StochasticCMF(CMF):
 
         self._scale = float(D) / self.minibatch_size
 
+        if self.init == 'nmf':
+            model = NMF(n_components=self.K, random_state=self.random_state)
+            self.W = model.fit_transform(X.T) 
+            self.H = model.components_ 
+            model_m = NMF(n_components=self.m, random_state=self.random_state)
+            self.W_m = model_m.fit_transform(self.W) 
+            self.H_m = model_m.components_ 
+            
         self._init_ql(D)
         self._init_qbeta(V)
 
@@ -363,3 +402,4 @@ class StochasticCMF(CMF):
         bound += np.sum(np.log(norm.pdf(self.l, 0, self.sigma)))
 
         return bound
+    
