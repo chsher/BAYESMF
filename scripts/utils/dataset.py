@@ -89,6 +89,6 @@ def make_downsampled_dataset(D=1000, V=100, random_state=22690, return_genes=Fal
     sparsity = np.count_nonzero(X == 0) / X.size
     
     if return_genes:
-        return adata_t.var.index[genes_want]
+        return X, sparsity, adata_t.var.index[genes_want]
     else:
         return X, sparsity
