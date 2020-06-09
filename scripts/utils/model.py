@@ -96,7 +96,7 @@ def run_kfold_xval(X, kfold=5, random_state=22690, init=None,
     idxs = np.arange(X.shape[1])
     
     if type(random_state) is int:
-        np.random.seed(22690)
+        np.random.seed(random_state)
     np.random.shuffle(idxs)
 
     splits = np.split(idxs, kfold)
